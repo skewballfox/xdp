@@ -1,0 +1,8 @@
+[package]
+name = "xdp"
+version = "0.0.1"
+edition = "2021"
+description = "AF_XDP socket support without C"
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
