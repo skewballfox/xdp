@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.1.0] - 2025-01-22
 ### Added
 - [PR#3](https://github.com/Jake-Shadle/xdp/pull/3) added the first pass implementation of the crate with a (mostly) working implementation focused on UDP packets. See the PR for a more detailed description of what is and is not supported.
 
@@ -16,5 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.0.1...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/Jake-Shadle/xdp/compare/0.0.1...0.1.0
 [0.0.1]: https://github.com/Jake-Shadle/xdp/releases/tag/0.0.1

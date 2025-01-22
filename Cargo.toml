@@ -1,6 +1,6 @@
 [package]
 name = "xdp"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "AF_XDP socket support without C dependencies"
 license = "Apache-2.0 OR MIT"
@@ -45,5 +45,5 @@ members = [
 libc = "0.2"
 #test-utils = { version = "0.1.0", path = "./crates/test-utils" }
 tokio = { version = "1.43.0", default-features = false, features = ["macros", "rt-multi-thread"] }
-xdp = { version = "0.0.1", path = "." }
+xdp = { version = "0.1.0", path = "." }
 etherparse = "0.17"
