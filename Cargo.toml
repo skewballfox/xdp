@@ -9,6 +9,9 @@ homepage = "https://github.com/Jake-Shadle/xdp"
 repository = "https://github.com/Jake-Shadle/xdp"
 documentation = "https://docs.rs/xdp"
 
+[badges]
+maintenance = { status = "actively-developed" }
+
 [dependencies]
 # While we have some inline bindings, libc provides a bulk of them
 libc.workspace = true
