@@ -2,7 +2,44 @@
 name = "xdp"
 version = "0.0.1"
 edition = "2021"
-description = "AF_XDP socket support without C"
+description = "AF_XDP socket support without C dependencies"
 license = "Apache-2.0 OR MIT"
+categories = ["network-programming", "os::linux-apis"]
+homepage = "https://github.com/Jake-Shadle/xdp"
+repository = "https://github.com/Jake-Shadle/xdp"
+documentation = "https://docs.rs/xdp"
 
 [dependencies]
+# While we have some inline bindings, libc provides a bulk of them
+libc.workspace = true
+# Nicer memmapping, which is the core of the XDP ring buffers
+memmap2 = "0.9"
+# Netlink messaging, ideally this would just be inlined, but that can wait
+neli = "0.6"
+
+[dev-dependencies]
+# Generates test packets
+etherparse.workspace = true
+# Additional checksum implementation for validation
+internet-checksum = "0.2"
+#test-utils.workspace = true
+tokio.workspace = true
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "csum"
+harness = false
+
+[workspace]
+members = [
+    ".",
+    #"crates/test-utils",
+]
+
+[workspace.dependencies]
+libc = "0.2"
+#test-utils = { version = "0.1.0", path = "./crates/test-utils" }
+tokio = { version = "1.43.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+xdp = { version = "0.0.1", path = "." }
+etherparse = "0.17"
