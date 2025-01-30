@@ -1,3 +1,6 @@
+//! The [`TxRing`] is a producer ring that userspace can enqueue packets to be
+//! sent by the NIC the ring is bound to
+
 use super::bindings::*;
 use crate::HeapSlab;
 
@@ -40,7 +43,7 @@ impl TxRing {
     ///
     /// # Safety
     ///
-    /// The [`Umem`] that owns the packets being sent must outlive the `AF_XDP`
+    /// The [`crate::Umem`] that owns the packets being sent must outlive the `AF_XDP`
     /// socket
     ///
     /// # Returns
@@ -93,7 +96,7 @@ impl WakableTxRing {
     ///
     /// # Safety
     ///
-    /// The [`Umem`] that owns the packets being sent must outlive the `AF_XDP`
+    /// The [`crate::Umem`] that owns the packets being sent must outlive the `AF_XDP`
     /// socket
     ///
     /// # Returns

@@ -1,3 +1,6 @@
+//! The [`CompletionRing`] is a consumer ring that userspace can dequeue packets
+//! that have been sent on the NIC queue the ring is bound to
+
 use super::bindings::*;
 use crate::Umem;
 
@@ -62,7 +65,7 @@ impl CompletionRing {
     /// The same as [`Self::dequeue`], except the timestamp each packet was
     /// transmitted is written to the provided slice.
     ///
-    /// Note this requires that [`Packet::set_tx_metadata`] was called
+    /// Note this requires that [`crate::Packet::set_tx_metadata`] was called
     pub fn dequeue_with_timestamps(&mut self, umem: &mut Umem, timestamps: &mut [u64]) -> usize {
         let requested = timestamps.len();
         if requested == 0 {
