@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.2.0] - 2025-01-30
 ### Fixed
 - [PR#4](https://github.com/Jake-Shadle/xdp/pull/4) fixed support for [TX checksum offload](https://docs.kernel.org/networking/xsk-tx-metadata.html).
 
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/Jake-Shadle/xdp/compare/0.0.1...0.1.0
 [0.0.1]: https://github.com/Jake-Shadle/xdp/releases/tag/0.0.1
