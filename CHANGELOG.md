@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.3.0] - 2025-02-14
 ### Changed
 - [PR#7](https://github.com/Jake-Shadle/xdp/pull/7) removed `libc` in favor of inline bindings.
 - [PR#9](https://github.com/Jake-Shadle/xdp/pull/9) removed `neli` in favor of a simpler inline implementation, resolving [#1](https://github.com/Jake-Shadle/xdp/issues/1).
@@ -33,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/Jake-Shadle/xdp/compare/0.0.1...0.1.0
 [0.0.1]: https://github.com/Jake-Shadle/xdp/releases/tag/0.0.1
