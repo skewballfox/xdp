@@ -3,7 +3,6 @@
 use crate::libc::{iface, socket};
 mod netlink;
 
-#[cfg(test)]
 macro_rules! flag_strings {
     ($table:expr, $v:expr, $f:expr) => {{
         let mut count = 0;
@@ -55,8 +54,7 @@ pub enum XdpModes {
 ///
 /// Zero copy gives the NIC the XDP socket(s) is bound to [direct memory access](https://en.wikipedia.org/wiki/Direct_memory_access)
 /// to the [`crate::Umem`] buffers provided by userspace to receive or send packets
-#[derive(Copy, Clone)]
-#[cfg_attr(test, derive(Debug))]
+#[derive(Copy, Clone, Debug)]
 pub enum XdpZeroCopy {
     /// Zero copy is not available for the device
     Unavailable,
@@ -108,9 +106,8 @@ pub enum XdpAct {
 
 /// The XDP features that can be supported by a network interface
 #[derive(Copy, Clone)]
-pub struct XdpFeatures(u64);
+pub struct XdpFeatures(pub u64);
 
-#[cfg(test)]
 impl fmt::Debug for XdpFeatures {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         flag_strings!(
@@ -170,9 +167,8 @@ pub enum RxMetadataFlags {
 
 /// The [RX metadata](https://docs.kernel.org/networking/xdp-rx-metadata.html) supported by a NIC
 #[derive(Copy, Clone)]
-pub struct XdpRxMetadata(u64);
+pub struct XdpRxMetadata(pub u64);
 
-#[cfg(test)]
 impl fmt::Debug for XdpRxMetadata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         flag_strings!(
@@ -222,9 +218,8 @@ pub enum TxMetadataFlags {
 
 /// The [`TxMetadataFlags`] supported by a NIC
 #[derive(Copy, Clone)]
-pub struct XdpTxMetadata(u64);
+pub struct XdpTxMetadata(pub u64);
 
-#[cfg(test)]
 impl fmt::Debug for XdpTxMetadata {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         flag_strings!(
@@ -253,7 +248,7 @@ impl XdpTxMetadata {
 }
 
 /// The capabilities available for a network device
-#[cfg_attr(test, derive(Debug))]
+#[derive(Debug)]
 pub struct NetdevCapabilities {
     // The [XDP modes](https://docs.ebpf.io/linux/program-type/BPF_PROG_TYPE_XDP/)
     // supported by the driver/device
@@ -695,6 +690,7 @@ impl Iterator for InterfaceIter {
 #[cfg(test)]
 mod test {
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn gets_features() {
         let nic = super::InterfaceIter::new().unwrap().next().unwrap();
         nic.query_capabilities().unwrap();
