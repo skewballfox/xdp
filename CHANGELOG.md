@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.4.0] - 2025-02-17
 ### Changed
 - [PR#11](https://github.com/Jake-Shadle/xdp/pull/11) fixed documentation, but also moved some types and constants around in the `libc` module.
 - [PR#14](https://github.com/Jake-Shadle/xdp/pull/14) changed `Packet::array_at_offset` to take a `&mut [u8; N]` rather than return it.
@@ -44,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/Jake-Shadle/xdp/compare/0.0.1...0.1.0
