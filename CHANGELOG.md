@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.5.0] - 2025-02-27
 ### Changed
 - [PR#15](https://github.com/Jake-Shadle/xdp/pull/15) renamed `UdpPacket` -> `UdpHeaders`, and changed the contents to be the actual headers that can be de/serialized from/to the packet buffer.
 - [PR#15](https://github.com/Jake-Shadle/xdp/pull/15) moved to edition 2024.
@@ -61,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/Jake-Shadle/xdp/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/Jake-Shadle/xdp/compare/0.1.0...0.2.0
