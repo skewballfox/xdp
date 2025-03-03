@@ -177,7 +177,7 @@ fn map_ring<T>(
     offset: libc::RingPageOffsets,
     offsets: &libc::xdp_ring_offset,
 ) -> std::io::Result<(crate::mmap::Mmap, XskRing<T>)> {
-    let mut mmap = crate::mmap::Mmap::map_ring(
+    let mmap = crate::mmap::Mmap::map_ring(
         offsets.desc as usize + (count as usize * std::mem::size_of::<T>()),
         offset as u64,
         socket,
@@ -185,7 +185,7 @@ fn map_ring<T>(
 
     // SAFETY: The lifetime of the pointers are the same as the mmap
     let ring = unsafe {
-        let map = mmap.as_mut_ptr();
+        let map = mmap.ptr;
 
         let producer = AtomicU32::from_ptr(map.byte_offset(offsets.producer as _).cast());
         let consumer = AtomicU32::from_ptr(map.byte_offset(offsets.consumer as _).cast());
@@ -260,6 +260,7 @@ impl<T> std::ops::Index<usize> for XskProducer<T> {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
+        // SAFETY: each ring impl ensures the index is valid
         unsafe { self.0.ring.get_unchecked(index) }
     }
 }
@@ -267,6 +268,7 @@ impl<T> std::ops::Index<usize> for XskProducer<T> {
 impl<T> std::ops::IndexMut<usize> for XskProducer<T> {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        // SAFETY: each ring impl ensures the index is valid
         unsafe { self.0.ring.get_unchecked_mut(index) }
     }
 }

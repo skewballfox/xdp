@@ -36,6 +36,10 @@ pub enum PacketError {
         /// The length of the actual valid contents
         length: usize,
     },
+    /// TX checksum offload is not supported
+    ChecksumUnsupported,
+    /// TX timestamp is not supported
+    TimestampUnsupported,
 }
 
 impl PacketError {
@@ -47,6 +51,8 @@ impl PacketError {
             Self::InvalidPacketLength {} => "invalid packet length",
             Self::InvalidOffset { .. } => "invalid offset",
             Self::InsufficientData { .. } => "insufficient data",
+            Self::ChecksumUnsupported => "TX checksum unsupported",
+            Self::TimestampUnsupported => "TX timestamp unsupported",
         }
     }
 }
@@ -75,12 +81,16 @@ pub unsafe trait Pod: Sized {
     /// Gets a zeroed [`Self`]
     #[inline]
     fn zeroed() -> Self {
+        // SAFETY: by implementing Pod the user is saying that an all zero block
+        // is a valid representation of this type
         unsafe { std::mem::zeroed() }
     }
 
     /// Gets [`Self`] as a byte slice
     #[inline]
     fn as_bytes(&self) -> &[u8] {
+        // SAFETY: by implementing Pod the user is saying that the struct can be
+        // represented safely by a byte slice
         unsafe {
             std::slice::from_raw_parts((self as *const Self).cast(), std::mem::size_of::<Self>())
         }
@@ -130,12 +140,11 @@ pub enum CsumOffload {
 /// │               │                    │        │          │    
 ///  head            +14                  +34      +42        tail
 /// ```
-///
-///
 pub struct Packet {
     /// The entire packet buffer, including headroom, initialized packet contents,
     /// and uninitialized/empty remainder
-    pub(crate) data: &'static mut [u8],
+    pub(crate) data: *mut u8,
+    pub(crate) capacity: usize,
     /// The offset in data where the packet starts
     pub(crate) head: usize,
     /// The offset in data where the packet ends
@@ -148,16 +157,14 @@ impl Packet {
     /// Only used for testing
     #[doc(hidden)]
     pub fn testing_new(buf: &mut [u8; 2 * 1024]) -> Self {
-        unsafe {
-            Self {
-                data: std::mem::transmute::<&mut [u8], &'static mut [u8]>(
-                    &mut buf[libc::xdp::XDP_PACKET_HEADROOM as usize..],
-                ),
-                head: 0,
-                tail: 0,
-                base: std::ptr::null(),
-                options: 0,
-            }
+        let data = &mut buf[libc::xdp::XDP_PACKET_HEADROOM as usize..];
+        Self {
+            data: data.as_mut_ptr(),
+            capacity: data.len(),
+            head: 0,
+            tail: 0,
+            base: std::ptr::null(),
+            options: 0,
         }
     }
 
@@ -179,7 +186,7 @@ impl Packet {
     /// part of every packet
     #[inline]
     pub fn capacity(&self) -> usize {
-        self.data.len()
+        self.capacity
     }
 
     /// Resets the tail of this packet, causing it to become empty
@@ -202,7 +209,7 @@ impl Packet {
     /// offload or not
     #[inline]
     pub fn can_offload_checksum(&self) -> bool {
-        (self.options & libc::InternalXdpFlags::SupportsChecksumOffload as u32) != 0
+        (self.options & libc::InternalXdpFlags::SUPPORTS_CHECKSUM_OFFLOAD) != 0
     }
 
     /// Adjust the head of the packet up or down by `diff` bytes
@@ -254,7 +261,7 @@ impl Packet {
             self.tail -= diff;
         } else {
             let diff = diff as usize;
-            if self.tail + diff > self.data.len() {
+            if self.tail + diff > self.capacity {
                 return Err(PacketError::InvalidPacketLength {});
             }
 
@@ -289,7 +296,8 @@ impl Packet {
             });
         }
 
-        Ok(unsafe { std::ptr::read_unaligned(self.data.as_ptr().byte_offset(start as _).cast()) })
+        // SAFETY: we've validated the pointer read is within bounds
+        Ok(unsafe { std::ptr::read_unaligned(self.data.byte_offset(start as _).cast()) })
     }
 
     /// Writes the contents of `item` at the specified `offset`
@@ -320,12 +328,10 @@ impl Packet {
             });
         }
 
+        // SAFETY: we've validated the pointer write is within bounds
         unsafe {
             std::ptr::write_unaligned(
-                self.data
-                    .as_mut_ptr()
-                    .byte_offset((self.head + offset) as _)
-                    .cast(),
+                self.data.byte_offset((self.head + offset) as _).cast(),
                 item,
             );
         }
@@ -353,7 +359,14 @@ impl Packet {
             });
         }
 
-        array.copy_from_slice(&self.data[start..start + N]);
+        // SAFETY: we've validated the range of data we are reading is valid
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.data.byte_offset(offset as _),
+                array.as_mut_ptr(),
+                N,
+            );
+        }
         Ok(())
     }
 
@@ -366,7 +379,7 @@ impl Packet {
     /// - The offset + `slice.len()` would exceed the capacity
     #[inline]
     pub fn insert(&mut self, offset: usize, slice: &[u8]) -> Result<(), PacketError> {
-        if self.tail + slice.len() > self.data.len() {
+        if self.tail + slice.len() > self.capacity {
             return Err(PacketError::InvalidPacketLength {});
         } else if offset > self.tail {
             return Err(PacketError::InvalidOffset {
@@ -377,27 +390,34 @@ impl Packet {
 
         let adjusted_offset = self.head + offset;
         let shift = self.tail + self.head - adjusted_offset;
-        if shift > 0 {
-            unsafe {
-                // Note that dst is declared before src, otherwise miri complains about UB
-                let dst = self
-                    .data
-                    .as_mut_ptr()
-                    .byte_offset((adjusted_offset + slice.len()) as isize);
-                let src = self.data.as_ptr().byte_offset(adjusted_offset as isize);
-                std::ptr::copy(src, dst, shift);
+
+        // SAFETY: we validate we're within bounds before doing any writes to the
+        // pointer, which is alive as long as the owning mmap
+        unsafe {
+            if shift > 0 {
+                std::ptr::copy(
+                    self.data.byte_offset(adjusted_offset as isize),
+                    self.data
+                        .byte_offset((adjusted_offset + slice.len()) as isize),
+                    shift,
+                );
             }
+
+            std::ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                self.data.byte_offset(adjusted_offset as _),
+                slice.len(),
+            );
         }
 
-        self.data[adjusted_offset..adjusted_offset + slice.len()].copy_from_slice(slice);
         self.tail += slice.len();
         Ok(())
     }
 
     /// Sets the specified [TX metadata](https://github.com/torvalds/linux/blob/ae90f6a6170d7a7a1aa4fddf664fbd093e3023bc/Documentation/networking/xsk-tx-metadata.rst)
     ///
-    /// Calling this function requires that the [`crate::umem::UmemCfgBuilder::tx_metadata`]
-    /// was true.
+    /// Calling this function requires that the [`crate::umem::UmemCfgBuilder::tx_checksum`]
+    /// and/or [`crate::umem::UmemCfgBuilder::tx_timestamp`] were true
     ///
     /// - If `csum` is `CsumOffload::Request`, this will request that the Layer 4
     ///     checksum computation be offload to the NIC before transmission. Note that
@@ -416,13 +436,21 @@ impl Packet {
         // This would mean the user is making a request that won't actually do anything
         debug_assert!(request_timestamp || matches!(csum, CsumOffload::Request { .. }));
 
-        if self.head < std::mem::size_of::<xdp::xsk_tx_metadata>() {
-            return Err(PacketError::InsufficientHeadroom {
-                diff: std::mem::size_of::<xdp::xsk_tx_metadata>(),
-                head: self.head,
-            });
+        if matches!(csum, CsumOffload::Request { .. })
+            && (self.options & libc::InternalXdpFlags::SUPPORTS_CHECKSUM_OFFLOAD) == 0
+        {
+            return Err(PacketError::ChecksumUnsupported);
+        } else if request_timestamp
+            && (self.options & libc::InternalXdpFlags::SUPPORTS_TIMESTAMP) == 0
+        {
+            return Err(PacketError::TimestampUnsupported);
         }
 
+        // SAFETY: While this looks pretty dangerous because we are getting a pointer
+        // before the base packet, it's actually safe as the presence of either the
+        // checksum offload or timestamp flags means the umem was registered with
+        // space for an xsk_tx_metadata that the kernel will also know the location
+        // of
         unsafe {
             let mut tx_meta = std::mem::zeroed::<xdp::xsk_tx_metadata>();
 
@@ -437,8 +465,9 @@ impl Packet {
 
             std::ptr::write_unaligned(
                 self.data
-                    .as_mut_ptr()
-                    .byte_offset((self.head - std::mem::size_of::<xdp::xsk_tx_metadata>()) as _)
+                    .byte_offset(
+                        self.head as isize - std::mem::size_of::<xdp::xsk_tx_metadata>() as isize,
+                    )
                     .cast(),
                 tx_meta,
             );
@@ -448,33 +477,51 @@ impl Packet {
 
         Ok(())
     }
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn inner_copy(&mut self) -> Self {
+        Self {
+            data: self.data,
+            capacity: self.capacity,
+            head: self.head,
+            tail: self.tail,
+            base: self.base,
+            options: self.options,
+        }
+    }
 }
 
 impl std::ops::Deref for Packet {
     type Target = [u8];
     fn deref(&self) -> &Self::Target {
-        &self.data[self.head..self.tail]
+        // SAFETY: the pointer is valid as long as the mmap is alive
+        unsafe { &std::slice::from_raw_parts(self.data, self.capacity)[self.head..self.tail] }
     }
 }
 
 impl std::ops::DerefMut for Packet {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data[self.head..self.tail]
+        // SAFETY: the pointer is valid as long as the mmap is alive
+        unsafe {
+            &mut std::slice::from_raw_parts_mut(self.data, self.capacity)[self.head..self.tail]
+        }
     }
 }
 
 impl From<Packet> for libc::xdp::xdp_desc {
     fn from(packet: Packet) -> Self {
         libc::xdp::xdp_desc {
+            // SAFETY: the pointer is valid as long as the mmap it is allocated
+            // from is alive
             addr: unsafe {
                 packet
                     .data
-                    .as_ptr()
                     .byte_offset(packet.head as _)
                     .offset_from(packet.base) as _
             },
             len: (packet.tail - packet.head) as _,
-            options: packet.options & !(libc::InternalXdpFlags::Mask as u32),
+            options: packet.options & !libc::InternalXdpFlags::MASK,
         }
     }
 }

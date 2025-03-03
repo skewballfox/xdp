@@ -223,24 +223,28 @@ impl XdpSocketBuilder {
         cfg: &rings::RingConfig,
     ) -> Result<libc::rings::xdp_mmap_offsets, SocketError> {
         let mut flags = 0;
-        if !umem.frame_size.is_power_of_two() {
+        // Internally umem uses frame_size - head room for the capacity of
+        // each packet, but we need to readjust it here so the kernel knows
+        // the actual size
+        let chunk_size = umem.frame_size as u32 + xdp::XDP_PACKET_HEADROOM as u32;
+        if !chunk_size.is_power_of_two() {
             flags |= xdp::UmemFlags::XDP_UMEM_UNALIGNED_CHUNK_FLAG;
         }
 
-        if umem.options & InternalXdpFlags::SupportsChecksumOffload as u32 != 0 {
+        if umem.options != 0 {
             // This value is only available in very recent ~6.11 kernels and was introduced
             // for those who didn't zero initialize xdp_umem_reg
             flags |= xdp::UmemFlags::XDP_UMEM_TX_METADATA_LEN;
 
-            if umem.options & InternalXdpFlags::SoftwareOffload as u32 != 0 {
+            if umem.options & InternalXdpFlags::USE_SOFTWARE_OFFLOAD != 0 {
                 flags |= xdp::UmemFlags::XDP_UMEM_TX_SW_CSUM;
             }
         }
 
         let umem_reg = xdp::XdpUmemReg {
-            addr: umem.mmap.as_ptr() as _,
+            addr: umem.mmap.ptr as _,
             len: umem.mmap.len() as _,
-            chunk_size: umem.frame_size as _,
+            chunk_size,
             headroom: umem.head_room as _,
             flags,
             tx_metadata_len: if umem.options != 0 {
@@ -320,6 +324,7 @@ impl XdpSocketBuilder {
             sxdp_shared_umem_fd: 0,
         };
 
+        // SAFETY: syscall, all inputs are valid
         if unsafe {
             socket::bind(
                 self.sock.as_raw_fd(),
@@ -336,15 +341,7 @@ impl XdpSocketBuilder {
 
     #[inline]
     fn set_sockopt<T>(&mut self, name: OptName, val: &T) -> Result<(), SocketError> {
-        // let level = if matches!(
-        //     name,
-        //     OptName::PreferBusyPoll | OptName::BusyPoll | OptName::BusyPollBudget
-        // ) {
-        //     libc::SOL_SOCKET
-        // } else {
-        //     libc::SOL_XDP
-        // };
-
+        // SAFETY: syscall, all inputs are valid
         if unsafe {
             libc::socket::setsockopt(
                 self.sock.as_raw_fd(),
@@ -424,6 +421,7 @@ impl XdpSocket {
 
     #[inline]
     fn poll_inner(&self, events: i16, timeout: PollTimeout) -> std::io::Result<bool> {
+        // SAFETY: syscall, all inputs are valid
         let ret = unsafe {
             socket::poll(
                 &mut socket::pollfd {

@@ -1,7 +1,7 @@
 //! The [`RxRing`] is a consumer ring that userspace can dequeue packets that have
 //! been received on the NIC queue the ring is bound to
 
-use crate::{HeapSlab, Umem, libc};
+use crate::{Umem, libc, slab::Slab};
 
 /// Ring from which we can dequeue packets that have been filled by the kernel
 pub struct RxRing {
@@ -48,7 +48,7 @@ impl RxRing {
     ///
     /// The packets returned in the slab must not outlive the [`Umem`]
     #[inline]
-    pub unsafe fn recv(&mut self, umem: &Umem, packets: &mut HeapSlab) -> usize {
+    pub unsafe fn recv<S: Slab>(&mut self, umem: &Umem, packets: &mut S) -> usize {
         let nb = packets.available();
         if nb == 0 {
             return 0;
@@ -57,20 +57,19 @@ impl RxRing {
         let (actual, idx) = self.ring.peek(nb as _);
 
         if actual > 0 {
-            unsafe { self.do_recv(actual, idx, umem, packets) };
+            let mask = self.ring.mask();
+            for i in idx..idx + actual {
+                let desc = self.ring[i & mask];
+                packets.push_front(
+                    // SAFETY: The user is responsible for the lifetime of the
+                    // packets we are returning
+                    unsafe { umem.packet(desc) },
+                );
+            }
+
+            self.ring.release(actual as _);
         }
 
         actual
-    }
-
-    #[inline]
-    unsafe fn do_recv(&mut self, actual: usize, idx: usize, umem: &Umem, packets: &mut HeapSlab) {
-        let mask = self.ring.mask();
-        for i in idx..idx + actual {
-            let desc = self.ring[i & mask];
-            packets.push_back(unsafe { umem.packet(desc) });
-        }
-
-        self.ring.release(actual as _);
     }
 }

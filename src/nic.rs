@@ -301,19 +301,19 @@ impl NicIndex {
     /// `None` if the interface cannot be found
     #[inline]
     pub fn lookup_by_name(ifname: &std::ffi::CStr) -> std::io::Result<Option<Self>> {
-        unsafe {
-            let res = iface::if_nametoindex(ifname.as_ptr());
-            if res == 0 {
-                let err = std::io::Error::last_os_error();
+        // SAFETY: syscall, we give it a valid pointer
+        let res = unsafe { iface::if_nametoindex(ifname.as_ptr().cast()) };
 
-                if err.raw_os_error() == Some(iface::ENODEV) {
-                    Ok(None)
-                } else {
-                    Err(err)
-                }
+        if res == 0 {
+            let err = std::io::Error::last_os_error();
+
+            if err.raw_os_error() == Some(iface::ENODEV) {
+                Ok(None)
             } else {
-                Ok(Some(Self(res)))
+                Err(err)
             }
+        } else {
+            Ok(Some(Self(res)))
         }
     }
 
@@ -321,6 +321,7 @@ impl NicIndex {
     #[inline]
     pub fn name(&self) -> std::io::Result<NicName> {
         let mut name = [0; iface::IF_NAMESIZE];
+        // SAFETY: syscall, we give it a valid pointer
         if unsafe { !iface::if_indextoname(self.0, name.as_mut_ptr()).is_null() } {
             let len = name
                 .iter()
@@ -337,6 +338,7 @@ impl NicIndex {
     pub fn addresses(
         &self,
     ) -> std::io::Result<(Option<std::net::Ipv4Addr>, Option<std::net::Ipv6Addr>)> {
+        // SAFETY: syscalls
         unsafe {
             let mut ifaddrs = std::mem::MaybeUninit::<*mut iface::ifaddrs>::uninit();
             if iface::getifaddrs(ifaddrs.as_mut_ptr()) != 0 {
@@ -349,6 +351,7 @@ impl NicIndex {
             struct Ifaddrs(*mut iface::ifaddrs);
             impl Drop for Ifaddrs {
                 fn drop(&mut self) {
+                    // SAFETY: syscall, we validate the pointer before allowing it to be freed
                     unsafe { iface::freeifaddrs(self.0) };
                 }
             }
@@ -506,10 +509,10 @@ impl NicIndex {
                         continue;
                     }
 
-                    if entry.d_name[..2] == [b'r' as i8, b'x' as i8] {
+                    if entry.d_name[..2] == [b'r', b'x'] {
                         channels.max_rx += 1;
                         channels.rx_count += 1;
-                    } else if entry.d_name[..2] == [b't' as i8, b'x' as i8] {
+                    } else if entry.d_name[..2] == [b't', b'x'] {
                         channels.max_tx += 1;
                         channels.tx_count += 1;
                     }
@@ -584,7 +587,7 @@ impl PartialEq<NicIndex> for NicIndex {
 /// The human-readable name assigned to a network device
 #[derive(Copy, Clone)]
 pub struct NicName {
-    arr: [i8; iface::IF_NAMESIZE],
+    arr: [u8; iface::IF_NAMESIZE],
     len: usize,
 }
 
@@ -593,10 +596,7 @@ impl NicName {
     /// unlikely case the interface name is not utf-8
     #[inline]
     pub fn as_str(&self) -> Option<&str> {
-        std::str::from_utf8(unsafe {
-            std::slice::from_raw_parts(self.arr.as_ptr().cast(), self.len)
-        })
-        .ok()
+        std::str::from_utf8(&self.arr[..self.len]).ok()
     }
 }
 
@@ -676,9 +676,10 @@ impl Iterator for InterfaceIter {
             ifname[..name.len()].copy_from_slice(name.as_bytes());
             ifname[name.len()] = 0;
 
-            let Ok(Some(iface)) = NicIndex::lookup_by_name(unsafe {
-                std::ffi::CStr::from_bytes_with_nul_unchecked(&ifname)
-            }) else {
+            let Ok(Some(iface)) = NicIndex::lookup_by_name(
+                // SAFETY: we ensure there is a null byte at the end
+                unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(&ifname) },
+            ) else {
                 continue;
             };
 
