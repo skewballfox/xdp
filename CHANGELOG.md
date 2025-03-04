@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.6.0] - 2025-03-04
 ### Changed
 - [PR#16](https://github.com/Jake-Shadle/xdp/pull/16) changed `RxRing` and `TxRing` to use the new `slab::Slab` trait.
 - [PR#16](https://github.com/Jake-Shadle/xdp/pull/16) moved `HeapSlab` to the new `slab` module, and made it implement `slab::Slab`, changing it so that items are always pushed to the front and popped from the back, unlike the previous implementation which allowed both.
@@ -76,7 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/Jake-Shadle/xdp/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/Jake-Shadle/xdp/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/Jake-Shadle/xdp/compare/0.2.0...0.3.0
