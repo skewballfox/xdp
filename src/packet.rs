@@ -423,6 +423,11 @@ impl Packet {
     /// ```
     #[inline]
     pub fn read<T: Pod>(&self, offset: usize) -> Result<T, PacketError> {
+        assert!(
+            offset < 4096,
+            "'offset' is wildly out of range and indicates a bug"
+        );
+
         let start = self.head + offset;
         if start > self.tail {
             return Err(PacketError::InvalidOffset {
@@ -499,6 +504,11 @@ impl Packet {
     /// ```
     #[inline]
     pub fn write<T: Pod>(&mut self, offset: usize, item: T) -> Result<(), PacketError> {
+        assert!(
+            offset < 4096,
+            "'offset' is wildly out of range and indicates a bug"
+        );
+
         let start = self.head + offset;
         if start > self.tail {
             return Err(PacketError::InvalidOffset {
@@ -560,6 +570,23 @@ impl Packet {
         offset: usize,
         array: &mut [u8; N],
     ) -> Result<(), PacketError> {
+        struct AssertReasonable<const N: usize>;
+
+        impl<const N: usize> AssertReasonable<N> {
+            const OK: () = assert!(N < 4096, "the array size far too large");
+        }
+
+        const fn assert_reasonable<const N: usize>() {
+            let () = AssertReasonable::<N>::OK;
+        }
+
+        assert_reasonable::<N>();
+
+        assert!(
+            offset < 4096,
+            "'offset' is wildly out of range and indicates a bug"
+        );
+
         let start = self.head + offset;
         if start + N > self.tail {
             return Err(PacketError::InsufficientData {
@@ -619,6 +646,12 @@ impl Packet {
     /// ```
     #[inline]
     pub fn insert(&mut self, offset: usize, slice: &[u8]) -> Result<(), PacketError> {
+        assert!(
+            offset < 4096,
+            "'offset' is wildly out of range and indicates a bug"
+        );
+        assert!(slice.len() <= 4096, "the slice length is far too large");
+
         if self.tail + slice.len() > self.capacity {
             return Err(PacketError::InvalidPacketLength {});
         } else if offset > self.tail {
