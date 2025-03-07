@@ -65,13 +65,12 @@ impl TxRing {
         let (actual, idx) = self.ring.reserve(requested as _);
 
         if actual > 0 {
-            let mask = self.ring.mask();
             for i in idx..idx + actual {
                 let Some(packet) = packets.pop_back() else {
                     unreachable!()
                 };
 
-                self.ring[i & mask] = packet.into();
+                self.ring.set(i, packet.into());
             }
 
             self.ring.submit(actual as _);
