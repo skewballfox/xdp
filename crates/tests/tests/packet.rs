@@ -31,6 +31,9 @@ fn simple() {
         tot_len - xdp::libc::xdp::XDP_PACKET_HEADROOM as usize,
     );
 
+    packet.adjust_tail(21).unwrap();
+    packet.adjust_head(21).unwrap();
+
     let val = b"deadbeef";
 
     packet.insert(0, val).unwrap();
@@ -72,6 +75,18 @@ fn simple() {
 
     packet.adjust_tail(-(packet.len() as i32)).unwrap();
     assert!(packet.is_empty());
+
+    packet
+        .insert(0, &0xf3f3f3f3f3f3f3f3u64.to_ne_bytes())
+        .unwrap();
+    packet.append(&0x1212121212121212u64.to_ne_bytes()).unwrap();
+
+    assert_eq!(packet.len(), 16);
+    let mut arr6 = [0u8; 8];
+    packet.array_at_offset(0, &mut arr6).unwrap();
+    assert_eq!(0xf3f3f3f3f3f3f3f3, u64::from_ne_bytes(arr6));
+    packet.array_at_offset(8, &mut arr6).unwrap();
+    assert_eq!(0x1212121212121212, u64::from_ne_bytes(arr6));
 }
 
 #[test]
@@ -125,25 +140,26 @@ fn udp_send() {
     ipv6.reset(64, nt::IpProto::Udp);
     ipv6.source = [10; 16];
     ipv6.destination = [1; 16];
-    let mut udp = UdpHeaders {
-        eth: nt::EthHdr {
+    let data_offset = nt::EthHdr::LEN + nt::Ipv6Hdr::LEN + nt::UdpHdr::LEN;
+
+    let mut udp = UdpHeaders::new(
+        nt::EthHdr {
             source: MacAddress([1; 6]),
             destination: MacAddress([2; 6]),
             ether_type: nt::EtherType::Ipv6,
         },
-        ip: nt::IpHdr::V6(ipv6),
-        udp: nt::UdpHdr {
+        nt::IpHdr::V6(ipv6),
+        nt::UdpHdr {
             source: 8900.into(),
             destination: 9001.into(),
             length: 0.into(),
             check: 0,
         },
-        data_offset: nt::EthHdr::LEN + nt::Ipv6Hdr::LEN + nt::UdpHdr::LEN,
-        data_length: payload.len(),
-    };
+        data_offset..data_offset + payload.len(),
+    );
 
-    udp.set_packet_headers(&mut packet, false).unwrap();
-    packet.insert(udp.data_offset, &payload).unwrap();
+    udp.set_packet_headers(&mut packet).unwrap();
+    packet.insert(udp.data.start, &payload).unwrap();
 
     let check = packet.calc_udp_checksum().unwrap();
 
@@ -213,10 +229,7 @@ fn parses_ipv4() {
             destination: Ipv4Addr::new(192, 168, 1, 1),
         }
     );
-    assert_eq!(
-        &packet[udp.data_offset..udp.data_offset + udp.data_length],
-        IPV4_DATA
-    );
+    assert_eq!(&packet[udp.data], IPV4_DATA);
 }
 
 /// Ensures we can parse an IPv6 UDP packet
@@ -246,8 +259,71 @@ fn parses_ipv6() {
             destination: DST,
         }
     );
+    assert_eq!(&packet[udp.data], IPV6_DATA);
+}
+
+/// Ensures the UDP length field matches the packet
+#[test]
+fn rejects_invalid_udp_length() {
+    let mut buf = [0u8; 2048];
+    let mut packet = Packet::testing_new(&mut buf);
+
+    PacketBuilder::ethernet2(SRC_MAC.0, DST_MAC.0)
+        .ipv6([20; 16], [33; 16], 64)
+        .udp(5353, 1111)
+        .write(&mut packet, IPV6_DATA)
+        .unwrap();
+
+    let mut udp_hdr: nt::UdpHdr = packet.read(nt::EthHdr::LEN + nt::Ipv6Hdr::LEN).unwrap();
+    assert_eq!(udp_hdr.source.host(), 5353);
+    assert_eq!(udp_hdr.destination.host(), 1111);
     assert_eq!(
-        &packet[udp.data_offset..udp.data_offset + udp.data_length],
-        IPV6_DATA
+        udp_hdr.length.host() as usize,
+        IPV6_DATA.len() + nt::UdpHdr::LEN
     );
+
+    // too long
+    {
+        udp_hdr.length = u16::MAX.into();
+        packet
+            .write(nt::EthHdr::LEN + nt::Ipv6Hdr::LEN, udp_hdr)
+            .unwrap();
+        assert!(UdpHeaders::parse_packet(&packet).is_err());
+    }
+
+    // too short
+    {
+        udp_hdr.length = (nt::UdpHdr::LEN as u16).into();
+        packet
+            .write(nt::EthHdr::LEN + nt::Ipv6Hdr::LEN, udp_hdr)
+            .unwrap();
+        assert!(UdpHeaders::parse_packet(&packet).is_err());
+    }
+
+    // off by 1
+    {
+        udp_hdr.length = ((nt::UdpHdr::LEN + IPV6_DATA.len() + 1) as u16).into();
+        packet
+            .write(nt::EthHdr::LEN + nt::Ipv6Hdr::LEN, udp_hdr)
+            .unwrap();
+        assert!(UdpHeaders::parse_packet(&packet).is_err());
+    }
+}
+
+#[test]
+#[should_panic]
+fn data_range() {
+    let mut buf = [0u8; 2 * 1024];
+    let mut packet = Packet::testing_new(&mut buf);
+
+    const DATA: &[u8] = &[0x43; 31];
+
+    packet.append(DATA).unwrap();
+    assert_eq!(packet.len(), DATA.len());
+
+    let mut range: xdp::packet::net_types::DataRange = (0..DATA.len()).into();
+    assert_eq!(&packet[range], DATA);
+
+    range.start = range.end + 1;
+    dbg!(&packet[range]);
 }

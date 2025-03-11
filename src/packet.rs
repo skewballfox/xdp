@@ -7,6 +7,17 @@ pub mod net_types;
 use crate::libc;
 use std::fmt;
 
+/// The maximum size of an XDP chunk is 4k, so any offsets or sizes larger than
+/// that indicates calling code is probably not correct
+const SANE: usize = 4096;
+
+// TODO: Replace with `std::intrinsics::unlikely` if/when it is stabilized
+// https://github.com/rust-lang/rust/issues/136873
+#[inline(always)]
+pub(crate) const fn unlikely<T>(x: T) -> T {
+    x
+}
+
 /// Errors that can occur when reading/writing [`Packet`] contents
 #[derive(Debug)]
 pub enum PacketError {
@@ -423,16 +434,18 @@ impl Packet {
     /// ```
     #[inline]
     pub fn read<T: Pod>(&self, offset: usize) -> Result<T, PacketError> {
-        assert!(
-            offset < 4096,
-            "'offset' is wildly out of range and indicates a bug"
-        );
+        if unlikely(offset >= SANE) {
+            return Err(PacketError::InvalidOffset {
+                offset,
+                length: self.len(),
+            });
+        }
 
         let start = self.head + offset;
         if start > self.tail {
             return Err(PacketError::InvalidOffset {
                 offset,
-                length: self.tail - self.head,
+                length: self.len(),
             });
         }
 
@@ -504,16 +517,18 @@ impl Packet {
     /// ```
     #[inline]
     pub fn write<T: Pod>(&mut self, offset: usize, item: T) -> Result<(), PacketError> {
-        assert!(
-            offset < 4096,
-            "'offset' is wildly out of range and indicates a bug"
-        );
+        if unlikely(offset >= SANE) {
+            return Err(PacketError::InvalidOffset {
+                offset,
+                length: self.len(),
+            });
+        }
 
         let start = self.head + offset;
         if start > self.tail {
             return Err(PacketError::InvalidOffset {
                 offset,
-                length: self.tail - self.head,
+                length: self.len(),
             });
         }
 
@@ -582,10 +597,12 @@ impl Packet {
 
         assert_reasonable::<N>();
 
-        assert!(
-            offset < 4096,
-            "'offset' is wildly out of range and indicates a bug"
-        );
+        if unlikely(offset >= SANE) {
+            return Err(PacketError::InvalidOffset {
+                offset,
+                length: self.len(),
+            });
+        }
 
         let start = self.head + offset;
         if start + N > self.tail {
@@ -596,13 +613,9 @@ impl Packet {
             });
         }
 
-        // SAFETY: we've validated the range of data we are reading is valid
+        // SAFETY: we've validated the range of data we are reading
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.data.byte_offset(offset as _),
-                array.as_mut_ptr(),
-                N,
-            );
+            std::ptr::copy_nonoverlapping(self.data.byte_offset(start as _), array.as_mut_ptr(), N);
         }
         Ok(())
     }
@@ -646,15 +659,9 @@ impl Packet {
     /// ```
     #[inline]
     pub fn insert(&mut self, offset: usize, slice: &[u8]) -> Result<(), PacketError> {
-        assert!(
-            offset < 4096,
-            "'offset' is wildly out of range and indicates a bug"
-        );
-        assert!(slice.len() <= 4096, "the slice length is far too large");
-
-        if self.tail + slice.len() > self.capacity {
+        if unlikely(slice.len() > SANE) || self.tail + slice.len() > self.capacity {
             return Err(PacketError::InvalidPacketLength {});
-        } else if offset > self.tail {
+        } else if offset > self.tail || unlikely(offset >= SANE) {
             return Err(PacketError::InvalidOffset {
                 offset,
                 length: self.len(),
@@ -679,6 +686,31 @@ impl Packet {
             std::ptr::copy_nonoverlapping(
                 slice.as_ptr(),
                 self.data.byte_offset(adjusted_offset as _),
+                slice.len(),
+            );
+        }
+
+        self.tail += slice.len();
+        Ok(())
+    }
+
+    /// Inserts a slice at tail of the packet
+    ///
+    /// # Errors
+    ///
+    /// - The current tail + `slice.len()` would exceed the capacity
+    #[inline]
+    pub fn append(&mut self, slice: &[u8]) -> Result<(), PacketError> {
+        if unlikely(slice.len() > SANE) || self.tail + slice.len() > self.capacity {
+            return Err(PacketError::InvalidPacketLength {});
+        }
+
+        // SAFETY: we validate we're within bounds before doing any writes to the
+        // pointer, which is alive as long as the owning mmap
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                slice.as_ptr(),
+                self.data.byte_offset(self.tail as _),
                 slice.len(),
             );
         }
@@ -756,7 +788,7 @@ impl Packet {
 
     #[doc(hidden)]
     #[inline]
-    pub fn inner_copy(&mut self) -> Self {
+    pub fn __inner_copy(&mut self) -> Self {
         Self {
             data: self.data,
             capacity: self.capacity,
@@ -805,7 +837,7 @@ impl From<Packet> for libc::xdp::xdp_desc {
 impl std::io::Write for Packet {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self.insert(self.tail - self.head, buf) {
+        match self.append(buf) {
             Ok(()) => Ok(buf.len()),
             Err(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::StorageFull,
