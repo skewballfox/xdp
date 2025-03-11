@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-header -->
 ## [Unreleased] - ReleaseDate
+## [0.7.0] - 2025-03-11
 ### Fixed
 - [PR#20](https://github.com/Jake-Shadle/xdp/pull/20) changed `EtherType` and `IpProto` from enums to scoped constants to avoid UB in the presence of invalid/corrupt data that didn't match a variant. Also removed a bunch of the `IpProto` variants as most will never be used, and since it's now scoped constants users can provide their own constants without needing them in the lib themselves. Resolved [#19](https://github.com/Jake-Shadle/xdp/issues/19).
 - [PR#23](https://github.com/Jake-Shadle/xdp/pull/23) added sanity checks to avoid subtraction underflow if the user provides wildly out of range offsets and/or slices to `Packet` methods.
@@ -91,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial crate squat
 
 <!-- next-url -->
-[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/Jake-Shadle/xdp/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/Jake-Shadle/xdp/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/Jake-Shadle/xdp/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/Jake-Shadle/xdp/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/Jake-Shadle/xdp/compare/0.3.0...0.4.0
