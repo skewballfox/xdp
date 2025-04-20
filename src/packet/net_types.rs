@@ -337,6 +337,65 @@ impl fmt::Debug for UdpHdr {
     }
 }
 
+/// The [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol) header
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct TcpHdr {
+    /// The source port of the sender
+    pub source: NetworkU16,
+    /// The destination port
+    pub destination: NetworkU16,
+    /// The sequence number of the packet
+    pub sequence: NetworkU32,
+    /// The acknowledgment number of the packet
+    pub ack_number: NetworkU32,
+    /// The data offset and flags
+    pub data_offset_flags: u16,
+    /// The window size
+    pub window_size: NetworkU16,
+    /// The checksum of the TCP header and data
+    pub check: u16,
+    /// The urgent pointer, if set
+    pub urgent_pointer: NetworkU16,
+}
+len!(TcpHdr);
+
+impl TcpHdr {
+    /// Returns a new [`Self`] with the source and destination ports swapped
+    #[inline]
+    pub fn swapped(&self) -> Self {
+        Self {
+            source: self.destination,
+            destination: self.source,
+            sequence: self.sequence,
+            ack_number: self.ack_number,
+            data_offset_flags: self.data_offset_flags,
+            window_size: self.window_size,
+            check: self.check,
+            urgent_pointer: self.urgent_pointer,
+        }
+    }
+}
+
+#[cfg(feature = "__debug")]
+impl fmt::Debug for TcpHdr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TcpHdr")
+            .field("source", &self.source)
+            .field("destination", &self.destination)
+            .field("sequence", &self.sequence)
+            .field("ack_number", &self.ack_number)
+            .field(
+                "data_offset_flags",
+                &format_args!("{:04x}", self.data_offset_flags),
+            )
+            .field("window_size", &self.window_size)
+            .field("check", &format_args!("{:04x}", self.check))
+            .field("urgent_pointer", &self.urgent_pointer)
+            .finish()
+    }
+}
+
 /// The IP (L3) address information for a packet
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum IpAddresses {
@@ -800,6 +859,271 @@ impl UdpHeaders {
         packet.write(offset, self.udp)?;
 
         Ok(())
+    }
+}
+
+/// A [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol)
+/// #[cfg_attr(feature = "__debug", derive(Debug))]
+pub struct TcpHeaders {
+    /// The data link layer header
+    pub eth: EthHdr,
+    /// The network header
+    pub ip: IpHdr,
+    /// The transport header
+    pub tcp: TcpHdr,
+    /// The range where the packet's data is located
+    pub data: DataRange,
+}
+
+impl TcpHeaders {
+    /// Creates a [`Self`]
+    #[inline]
+    pub fn new(eth: EthHdr, ip: IpHdr, tcp: TcpHdr, data: impl Into<DataRange>) -> Self {
+        Self {
+            eth,
+            ip,
+            tcp,
+            data: data.into(),
+        }
+    }
+
+    /// Attempts to parse a [`Self`] from a packet.
+    ///
+    /// Returns `Ok(None)` if the packet doesn't seem corrupted, but doesn't
+    /// actually contain a UDP packet, eg. it is not an IP packet, or has a
+    /// different transport layer protocol
+    ///
+    /// # Errors
+    ///
+    /// Errors in cases where the data can be partially parsed but the size of the
+    /// packet data indicates a corrupt/invalid packet
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xdp::packet::net_types as nt;
+    /// const DATA_LEN: usize = 33;
+    ///
+    /// # use xdp::packet::Pod;
+    /// # let mut umem = xdp::Umem::map(
+    /// #    xdp::umem::UmemCfgBuilder {
+    /// #        head_room: 0,
+    /// #        ..Default::default()
+    /// #    }.build().unwrap()
+    /// # ).expect("failed to map Umem");
+    /// #
+    /// # let mut packet = unsafe {
+    /// #    let mut packet = umem.alloc().expect("failed to allocate packet");
+    /// #    packet.adjust_tail(14 + 20 + 8).unwrap();
+    /// #    packet.write(0, nt::EthHdr {
+    /// #       source: nt::MacAddress([1; 6]),
+    /// #       destination: nt::MacAddress([2; 6]),
+    /// #       ether_type: nt::EtherType::Ipv4 }
+    /// #   ).expect("failed to write ethhdr");
+    /// #
+    /// #   let mut ip = nt::Ipv4Hdr::zeroed();
+    /// #   ip.reset(64, nt::IpProto::Tcp);
+    /// #   ip.source = u32::from_be_bytes([100, 1, 2, 100]).into();
+    /// #   ip.destination = u32::from_be_bytes([200, 2, 1, 200]).into();
+    /// #   ip.total_length = ((nt::Ipv4Hdr::LEN + nt::UdpHdr::LEN + DATA_LEN) as u16).into();
+    /// #   packet.write(nt::EthHdr::LEN, ip).expect("failed to write ip hdr");
+    /// #
+    /// #   packet.write(nt::EthHdr::LEN + nt::Ipv4Hdr::LEN, nt::UdpHdr {
+    /// #       source: 50000.into(),
+    /// #       destination: 80.into(),
+    /// #       length: ((nt::UdpHdr::LEN + DATA_LEN) as u16).into(),
+    /// #       check: 0,
+    /// #   }).expect("failed to write ip hdr");
+    /// #
+    /// #   packet.insert(nt::EthHdr::LEN + nt::Ipv4Hdr::LEN + nt::UdpHdr::LEN, &[0xf0; DATA_LEN]).unwrap();
+    /// #   packet.calc_udp_checksum().unwrap();
+    /// #   packet
+    /// # };
+    ///
+    /// let udp_hdrs = nt::UdpHeaders::parse_packet(&packet).expect("error parsing packet").expect("not a UDP packet");
+    ///
+    /// assert_eq!(udp_hdrs.eth.source.0, [1; 6]);
+    /// assert_eq!(udp_hdrs.eth.ether_type, nt::EtherType::Ipv4);
+    ///
+    /// let nt::IpHdr::V4(ipv4) = &udp_hdrs.ip else { unreachable!() };
+    /// assert_eq!(ipv4.destination.host(), std::net::Ipv4Addr::new(200, 2, 1, 200).to_bits());
+    ///
+    /// assert_eq!(udp_hdrs.udp.source.host(), 50000);
+    ///
+    /// assert_eq!(udp_hdrs.data.start, nt::EthHdr::LEN + nt::Ipv4Hdr::LEN + nt::UdpHdr::LEN);
+    /// assert_eq!(udp_hdrs.data_length(), DATA_LEN);
+    /// assert_eq!(&packet[udp_hdrs.data], &[0xf0; DATA_LEN]);
+    /// ```
+    pub fn parse_packet(packet: &super::Packet) -> Result<Option<Self>, super::PacketError> {
+        // will do in next commit,
+        todo!("TCP packet parsing is not yet implemented");
+    }
+
+    /// True if and IPv4 packet
+    #[inline]
+    pub fn is_ipv4(&self) -> bool {
+        matches!(&self.ip, IpHdr::V4(_))
+    }
+
+    /// The total length of the header segments before the data segment
+    #[inline]
+    pub fn header_length(&self) -> usize {
+        EthHdr::LEN
+            + if self.is_ipv4() {
+                Ipv4Hdr::LEN
+            } else {
+                Ipv6Hdr::LEN
+            }
+            + TcpHdr::LEN
+    }
+
+    /// The length of the data portion of the packet
+    #[inline(always)]
+    pub fn data_length(&self) -> usize {
+        self.data.end - self.data.start
+    }
+
+    /// Decrements the hop counter
+    #[inline]
+    pub fn decrement_hop(&mut self) -> u8 {
+        self.ip.decrement_hop()
+    }
+
+    /// Retrieves the source address information
+    #[inline]
+    pub fn source_address(&self) -> SocketAddr {
+        use std::net::*;
+
+        match self.ip {
+            IpHdr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::from_bits(v4.source.host()),
+                self.tcp.source.host(),
+            )),
+            IpHdr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
+                ipv6_addr_from_bytes(v6.source),
+                self.tcp.source.host(),
+                // we _could_ retrieve these from the header, but...meh
+                0,
+                0,
+            )),
+        }
+    }
+
+    /// Retrieves the destination address information
+    #[inline]
+    pub fn destination_address(&self) -> SocketAddr {
+        use std::net::*;
+
+        match self.ip {
+            IpHdr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::from_bits(v4.destination.host()),
+                self.tcp.destination.host(),
+            )),
+            IpHdr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(
+                ipv6_addr_from_bytes(v6.destination),
+                self.tcp.destination.host(),
+                // we _could_ retrieve these from the header, but...meh
+                0,
+                0,
+            )),
+        }
+    }
+
+    /// Writes the headers to the front of the packet buffer.
+    ///
+    /// # Errors
+    ///
+    /// The packet buffer must have enough space for all of the headers
+    pub fn set_packet_headers(
+        &mut self,
+        packet: &mut super::Packet,
+    ) -> Result<(), super::PacketError> {
+        let mut offset = EthHdr::LEN;
+
+        // the tcp packet itself can have a variable length
+        let data_offset = self.data.start
+            - EthHdr::LEN
+            - match &self.ip {
+                IpHdr::V4(_) => Ipv4Hdr::LEN,
+                IpHdr::V6(_) => Ipv6Hdr::LEN,
+            };
+        if !(20..=60).contains(&data_offset) {
+            return Err(super::PacketError::InvalidDataOffset {
+                data_offset: data_offset,
+            });
+        }
+
+        // self.eth.ether_type = match &mut self.ip {
+        //     IpHdr::V4(v4) => {
+        //         v4.total_length = (length + Ipv4Hdr::LEN as u16).into();
+        //         v4.calc_checksum();
+        //         packet.write(offset, *v4)?;
+        //         offset += Ipv4Hdr::LEN;
+        //         EtherType::Ipv4
+        //     }
+        //     IpHdr::V6(v6) => {
+        //         v6.payload_length = length.into();
+        //         packet.write(offset, *v6)?;
+        //         offset += Ipv6Hdr::LEN;
+        //         EtherType::Ipv6
+        //     }
+        // };
+
+        // packet.write(0, self.eth)?;
+        // self.tcp.data_offset
+        todo!("TCP packet part WIP");
+        Ok(())
+    }
+
+    /// Gets the data offset of the TCP header, which is the start of the data
+    /// segment, in bytes.
+    pub fn data_offset(&self) -> usize {
+        const OFFSET_MASK: u16 = 0xf000;
+        let data_offset = (self.tcp.data_offset_flags & OFFSET_MASK) >> 12;
+        (data_offset * 4) as usize // convert to bytes
+    }
+
+    /// Gets the reserved bits of the TCP header, which should not be set
+    pub fn resv(&self) -> u16 {
+        const RESV_MASK: u16 = 0x0f00;
+        (self.tcp.data_offset_flags & RESV_MASK) >> 8
+    }
+
+    /// get congestion control flag
+    pub fn cwr(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0080) != 0
+    }
+
+    /// get ECN-Echo flag
+    pub fn ece(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0040) != 0
+    }
+
+    /// get urgent flag
+    pub fn urg(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0020) != 0
+    }
+
+    /// get acknowledgment flag
+    pub fn ack(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0010) != 0
+    }
+    /// get push flag
+    pub fn psh(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0008) != 0
+    }
+    /// get reset flag
+    pub fn rst(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0004) != 0
+    }
+    /// get syn flag
+    pub fn syn(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0002) != 0
+    }
+
+    /// get fin flag
+    pub fn fin(&self) -> bool {
+        (self.tcp.data_offset_flags & 0x0001) != 0
     }
 }
 

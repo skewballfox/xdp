@@ -38,6 +38,13 @@ pub enum PacketError {
         /// The length the offset must be below
         length: usize,
     },
+    /// For TCP, the data offset was invalid, i.e. fell outside of the valid
+    /// range of 20..=60 bytes
+    InvalidDataOffset {
+        /// the data offset that was attempted to be read/written
+        data_offset: usize,
+    },
+
     /// Attempt to retrieve data outside the bounds of the currently valid contents
     InsufficientData {
         /// The offset the data would start at
@@ -64,6 +71,9 @@ impl PacketError {
             Self::InsufficientData { .. } => "insufficient data",
             Self::ChecksumUnsupported => "TX checksum unsupported",
             Self::TimestampUnsupported => "TX timestamp unsupported",
+            Self::InvalidDataOffset { .. } => {
+                "invalid data offset, must be between 20 and 60 bytes"
+            }
         }
     }
 }
