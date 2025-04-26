@@ -375,6 +375,56 @@ impl TcpHdr {
             urgent_pointer: self.urgent_pointer,
         }
     }
+    /// Gets the data offset of the TCP header, which is the start of the data
+    /// segment, in bytes.
+    pub fn data_offset(&self) -> usize {
+        const OFFSET_MASK: u16 = 0xf000;
+        let data_offset = (self.data_offset_flags & OFFSET_MASK) >> 12;
+        (data_offset * 4) as usize // convert to bytes
+    }
+
+    /// Gets the reserved bits of the TCP header, which should not be set
+    pub fn resv(&self) -> u16 {
+        const RESV_MASK: u16 = 0x0f00;
+        (self.data_offset_flags & RESV_MASK) >> 8
+    }
+
+    /// get congestion control flag
+    pub fn cwr(&self) -> bool {
+        (self.data_offset_flags & 0x0080) != 0
+    }
+
+    /// get ECN-Echo flag
+    pub fn ece(&self) -> bool {
+        (self.data_offset_flags & 0x0040) != 0
+    }
+
+    /// get urgent flag
+    pub fn urg(&self) -> bool {
+        (self.data_offset_flags & 0x0020) != 0
+    }
+
+    /// get acknowledgment flag
+    pub fn ack(&self) -> bool {
+        (self.data_offset_flags & 0x0010) != 0
+    }
+    /// get push flag
+    pub fn psh(&self) -> bool {
+        (self.data_offset_flags & 0x0008) != 0
+    }
+    /// get reset flag
+    pub fn rst(&self) -> bool {
+        (self.data_offset_flags & 0x0004) != 0
+    }
+    /// get syn flag
+    pub fn syn(&self) -> bool {
+        (self.data_offset_flags & 0x0002) != 0
+    }
+
+    /// get fin flag
+    pub fn fin(&self) -> bool {
+        (self.data_offset_flags & 0x0001) != 0
+    }
 }
 
 #[cfg(feature = "__debug")]
@@ -393,6 +443,142 @@ impl fmt::Debug for TcpHdr {
             .field("check", &format_args!("{:04x}", self.check))
             .field("urgent_pointer", &self.urgent_pointer)
             .finish()
+    }
+}
+
+/// The kind of TCP option
+#[repr(u8)]
+pub enum TcpOptionKind {
+    /// End of options list
+    Eol = 0,
+    /// No operation, used for padding
+    Nop = 1,
+    /// See [Maximum Segment Size](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#Maximum_segment_size)
+    MaximumSegmentSize = 2,
+    /// See [Tcp Window Scaling Option](https://en.wikipedia.org/wiki/TCP_window_scale_option)
+    WindowScale = 3,
+    /// Whether Selective Acknowledgments are permitted.
+    SAckPermitted = 4,
+    /// See [Selective Acknowledgments](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#Selective_acknowledgments)
+    SAck = 5,
+    /// See [TCP Timestamps](https://en.wikipedia.org/wiki/Transmission_Control_Protocol#TCP_timestamps)
+    Timestamp = 8,
+    /// Specifies the amount of time that transmitted data may remain unacknowledged before the TCP connection is forcibly closed
+    UserTimeout = 28,
+    /// See [Kernel docs on TCP Authentication Option](https://docs.kernel.org/networking/tcp_ao.html)
+    TcpAuthOption = 29,
+    /// See [Multipath TCP](https://en.wikipedia.org/wiki/Multipath_TCP)
+    MultipathTcp = 30,
+}
+
+unsafe impl Pod for TcpOptionKind {
+    fn size() -> usize {
+        std::mem::size_of::<Self>()
+    }
+
+    fn zeroed() -> Self {
+        // SAFETY: by implementing Pod the user is saying that an all zero block
+        // is a valid representation of this type
+        unsafe { std::mem::zeroed() }
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        // SAFETY: by implementing Pod the user is saying that the struct can be
+        // represented safely by a byte slice
+        unsafe {
+            std::slice::from_raw_parts((self as *const Self).cast(), std::mem::size_of::<Self>())
+        }
+    }
+
+    // fn from_bytes(bytes: &[u8]) -> Result<Self, super::PodError> {
+    //     if bytes.len() == 0  {
+    //         return Err(super::PodError::InsufficientData {
+    //             size: Self::SIZE,
+    //             length: bytes.len(),
+    //         });
+    //     }
+    //     match TcpOptionKind::try_from(bytes[0]).map_err(|_| super::PodError::InvalidData {
+    //         offset: 0,
+    //         size: Self::SIZE,
+    //         length: bytes.len(),
+    //     }) {
+    //         Ok(kind) => Ok(kind),
+    //         Err(_) => Err(super::PodError::InvalidData {
+    //             offset: 0,
+    //             size: Self::SIZE,
+    //             length: bytes.len(),
+    //         }),
+    //     }
+    // }
+}
+/// A TCP option, which is a variable length field in the TCP header
+pub struct TcpOption {
+    /// The kind of option
+    pub kind: TcpOptionKind,
+    /// The length of the option, including the kind and length fields
+    pub length: u8,
+    /// The range of the data in the TcpOption
+    pub data: DataRange,
+}
+
+impl TcpOption {
+    fn from_packet(
+        packet: &super::Packet,
+        offset: usize,
+    ) -> Result<Option<Self>, super::PacketError> {
+        if offset + 1 >= packet.len() {
+            return Err(super::PacketError::InsufficientData {
+                offset,
+                size: 1,
+                length: packet.len(),
+            });
+        }
+        let kind = packet.read::<TcpOptionKind>(offset)?;
+        // let len = match kind as u8 {
+        //     0|1 => return Ok(None),
+        //     2|28 => 4,
+        //     3 => 3,
+        //     4 => 2,
+        //     8 => 10,
+        //     5 => {
+        //         let len = packet.read::<u8>(offset + 1)?;
+        //         if [10, 18, 26, 34].contains(x& len) {
+        //             len as usize
+        //         } else {
+        //             return Err(super::PacketError::InvalidData {
+        //                 offset,
+        //                 size: 1,
+        //                 length: packet.len(),
+        //             });
+        //         }
+        //     }
+        //     29 => {
+        //         let len = packet.read::<u8>(offset + 1)?;
+        //         todo!("TCP Authentication Option not implemented yet, length: {len}");
+        //     }
+        //     30 => {
+        //         let len = packet.read::<u8>(offset + 1)?;
+        //         todo!("Multipath TCP not implemented yet, length: {len}");
+        //     }
+        // };
+        // if offset + len > packet.len() {
+        //     return Err(super::PacketError::InsufficientData {
+        //         offset,
+        //         size: len,
+        //         length: packet.len(),
+        //     });
+        // }
+        // let data = DataRange {
+        //     start: offset + 2,
+        //     end: offset + len,
+        // };
+
+        // Ok(Some(Self {
+        //     kind,
+        //     length: len as u8,
+        //     data,
+        // }))
+        todo!()
     }
 }
 
@@ -940,7 +1126,7 @@ impl TcpHeaders {
     /// #   packet
     /// # };
     ///
-    /// let udp_hdrs = nt::UdpHeaders::parse_packet(&packet).expect("error parsing packet").expect("not a UDP packet");
+    /// let Tcp_hdrs = nt::TcpHeaders::parse_packet(&packet).expect("error parsing packet").expect("not a UDP packet");
     ///
     /// assert_eq!(udp_hdrs.eth.source.0, [1; 6]);
     /// assert_eq!(udp_hdrs.eth.ether_type, nt::EtherType::Ipv4);
@@ -955,8 +1141,49 @@ impl TcpHeaders {
     /// assert_eq!(&packet[udp_hdrs.data], &[0xf0; DATA_LEN]);
     /// ```
     pub fn parse_packet(packet: &super::Packet) -> Result<Option<Self>, super::PacketError> {
-        // will do in next commit,
-        todo!("TCP packet parsing is not yet implemented");
+        let mut offset = 0;
+        let eth = packet.read::<EthHdr>(offset)?;
+        offset += EthHdr::LEN;
+        let ip = match eth.ether_type {
+            EtherType::Ipv4 => {
+                let ipv4 = packet.read::<Ipv4Hdr>(offset)?;
+                offset += Ipv4Hdr::LEN;
+
+                if ipv4.proto == IpProto::Udp {
+                    IpHdr::V4(ipv4)
+                } else {
+                    return Ok(None);
+                }
+            }
+            EtherType::Ipv6 => {
+                let ipv6 = packet.read::<Ipv6Hdr>(offset)?;
+                offset += Ipv6Hdr::LEN;
+
+                if ipv6.next_header == IpProto::Udp {
+                    IpHdr::V6(ipv6)
+                } else {
+                    return Ok(None);
+                }
+            }
+            _ => {
+                return Ok(None);
+            }
+        };
+        let tcp = packet.read::<TcpHdr>(offset)?;
+        //also works as the length of the TCP header (including optional data)
+        let data_offset = tcp.data_offset() as usize;
+        if data_offset < TcpHdr::LEN || offset + data_offset > packet.len() {
+            return Err(super::PacketError::InvalidDataOffset {
+                data_offset: data_offset,
+            });
+        }
+        let start = offset + data_offset;
+        Ok(Some(Self {
+            eth,
+            ip,
+            tcp,
+            data: (start..packet.len()).into(),
+        }))
     }
 
     /// True if and IPv4 packet
@@ -1073,57 +1300,6 @@ impl TcpHeaders {
         // self.tcp.data_offset
         todo!("TCP packet part WIP");
         Ok(())
-    }
-
-    /// Gets the data offset of the TCP header, which is the start of the data
-    /// segment, in bytes.
-    pub fn data_offset(&self) -> usize {
-        const OFFSET_MASK: u16 = 0xf000;
-        let data_offset = (self.tcp.data_offset_flags & OFFSET_MASK) >> 12;
-        (data_offset * 4) as usize // convert to bytes
-    }
-
-    /// Gets the reserved bits of the TCP header, which should not be set
-    pub fn resv(&self) -> u16 {
-        const RESV_MASK: u16 = 0x0f00;
-        (self.tcp.data_offset_flags & RESV_MASK) >> 8
-    }
-
-    /// get congestion control flag
-    pub fn cwr(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0080) != 0
-    }
-
-    /// get ECN-Echo flag
-    pub fn ece(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0040) != 0
-    }
-
-    /// get urgent flag
-    pub fn urg(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0020) != 0
-    }
-
-    /// get acknowledgment flag
-    pub fn ack(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0010) != 0
-    }
-    /// get push flag
-    pub fn psh(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0008) != 0
-    }
-    /// get reset flag
-    pub fn rst(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0004) != 0
-    }
-    /// get syn flag
-    pub fn syn(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0002) != 0
-    }
-
-    /// get fin flag
-    pub fn fin(&self) -> bool {
-        (self.tcp.data_offset_flags & 0x0001) != 0
     }
 }
 
