@@ -38,6 +38,21 @@ pub enum PacketError {
         /// The length the offset must be below
         length: usize,
     },
+    /// The TCP option was either invalid or not yet supported by this crate
+    InvalidOrUnsupportedTCPOption {
+        /// The Tcp option kind that was invalid or unsupported
+        kind: u8,
+    },
+    //we can make the assumption here that the TCP option kind is supported,
+    //so the length is invalid for that option kind
+    /// The Length for the TCP Option was invalid, i.e. not in the range of values
+    /// possible for that option kind
+    InvalidTcpOptionLength {
+        /// The TCP option kind which was followed by the invalid length
+        kind: u8,
+        /// The length of the TCP option that was invalid
+        length: u8,
+    },
     /// For TCP, the data offset was invalid, i.e. fell outside of the valid
     /// range of 20..=60 bytes
     InvalidDataOffset {
@@ -74,6 +89,8 @@ impl PacketError {
             Self::InvalidDataOffset { .. } => {
                 "invalid data offset, must be between 20 and 60 bytes"
             }
+            Self::InvalidOrUnsupportedTCPOption { .. } => "Invalid or unsupported TCP option",
+            Self::InvalidTcpOptionLength { .. } => "Invalid TCP option length",
         }
     }
 }

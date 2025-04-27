@@ -1,7 +1,7 @@
 //! This is a minimal set of type definitions/helpers for common network types,
 //! so one does not need to depend on eg. network-types which lacks comments
 
-use super::{Pod, csum};
+use super::{PacketError, Pod, csum};
 use std::{
     fmt,
     mem::size_of,
@@ -448,6 +448,7 @@ impl fmt::Debug for TcpHdr {
 
 /// The kind of TCP option
 #[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TcpOptionKind {
     /// End of options list
     Eol = 0,
@@ -471,46 +472,54 @@ pub enum TcpOptionKind {
     MultipathTcp = 30,
 }
 
-unsafe impl Pod for TcpOptionKind {
-    fn size() -> usize {
-        std::mem::size_of::<Self>()
+impl TcpOptionKind {
+    /// Gets the kind as a `u8`
+    #[inline]
+    pub fn as_u8(self) -> u8 {
+        self as u8
     }
 
-    fn zeroed() -> Self {
-        // SAFETY: by implementing Pod the user is saying that an all zero block
-        // is a valid representation of this type
-        unsafe { std::mem::zeroed() }
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        // SAFETY: by implementing Pod the user is saying that the struct can be
-        // represented safely by a byte slice
-        unsafe {
-            std::slice::from_raw_parts((self as *const Self).cast(), std::mem::size_of::<Self>())
+    /// Checks whether a given length is valid for this option kind
+    /// Will return `false` for [`TcpOptionKind::Eol`] and [`TcpOptionKind::Nop`]
+    pub fn is_valid_length(self, length: u8) -> bool {
+        match self {
+            Self::Eol | Self::Nop => false,
+            Self::MaximumSegmentSize | Self::UserTimeout => length == 4,
+            Self::WindowScale => length == 3,
+            Self::SAckPermitted => length == 2,
+            Self::SAck => [10, 18, 26, 34].contains(&length),
+            Self::Timestamp => length == 10,
+            Self::TcpAuthOption => {
+                todo!("TCP Authentication Option not implemented yet, length: {length}");
+            }
+            Self::MultipathTcp => {
+                todo!("Multipath TCP not implemented yet, length: {length}");
+            }
         }
     }
-
-    // fn from_bytes(bytes: &[u8]) -> Result<Self, super::PodError> {
-    //     if bytes.len() == 0  {
-    //         return Err(super::PodError::InsufficientData {
-    //             size: Self::SIZE,
-    //             length: bytes.len(),
-    //         });
-    //     }
-    //     match TcpOptionKind::try_from(bytes[0]).map_err(|_| super::PodError::InvalidData {
-    //         offset: 0,
-    //         size: Self::SIZE,
-    //         length: bytes.len(),
-    //     }) {
-    //         Ok(kind) => Ok(kind),
-    //         Err(_) => Err(super::PodError::InvalidData {
-    //             offset: 0,
-    //             size: Self::SIZE,
-    //             length: bytes.len(),
-    //         }),
-    //     }
-    // }
 }
+
+impl TryFrom<u8> for TcpOptionKind {
+    type Error = PacketError;
+    fn try_from(value: u8) -> Result<Self, PacketError> {
+        Ok(match value {
+            0 => Self::Eol,
+            1 => Self::Nop,
+            2 => Self::MaximumSegmentSize,
+            3 => Self::WindowScale,
+            4 => Self::SAckPermitted,
+            5 => Self::SAck,
+            8 => Self::Timestamp,
+            28 => Self::UserTimeout,
+            29 => Self::TcpAuthOption,
+            30 => Self::MultipathTcp,
+            x => {
+                return Err(PacketError::InvalidOrUnsupportedTCPOption { kind: x });
+            }
+        })
+    }
+}
+
 /// A TCP option, which is a variable length field in the TCP header
 pub struct TcpOption {
     /// The kind of option
@@ -533,52 +542,40 @@ impl TcpOption {
                 length: packet.len(),
             });
         }
-        let kind = packet.read::<TcpOptionKind>(offset)?;
-        // let len = match kind as u8 {
-        //     0|1 => return Ok(None),
-        //     2|28 => 4,
-        //     3 => 3,
-        //     4 => 2,
-        //     8 => 10,
-        //     5 => {
-        //         let len = packet.read::<u8>(offset + 1)?;
-        //         if [10, 18, 26, 34].contains(x& len) {
-        //             len as usize
-        //         } else {
-        //             return Err(super::PacketError::InvalidData {
-        //                 offset,
-        //                 size: 1,
-        //                 length: packet.len(),
-        //             });
-        //         }
-        //     }
-        //     29 => {
-        //         let len = packet.read::<u8>(offset + 1)?;
-        //         todo!("TCP Authentication Option not implemented yet, length: {len}");
-        //     }
-        //     30 => {
-        //         let len = packet.read::<u8>(offset + 1)?;
-        //         todo!("Multipath TCP not implemented yet, length: {len}");
-        //     }
-        // };
-        // if offset + len > packet.len() {
-        //     return Err(super::PacketError::InsufficientData {
-        //         offset,
-        //         size: len,
-        //         length: packet.len(),
-        //     });
-        // }
-        // let data = DataRange {
-        //     start: offset + 2,
-        //     end: offset + len,
-        // };
-
-        // Ok(Some(Self {
-        //     kind,
-        //     length: len as u8,
-        //     data,
-        // }))
-        todo!()
+        let kind = TcpOptionKind::try_from(packet[offset])?;
+        if kind == TcpOptionKind::Eol || kind == TcpOptionKind::Nop {
+            return Ok(None); // No data for these options
+        }
+        if offset + 2 >= packet.len() {
+            return Err(super::PacketError::InsufficientData {
+                offset,
+                size: 2,
+                length: packet.len(),
+            });
+        };
+        let len = packet[offset + 1];
+        if !kind.is_valid_length(len) {
+            return Err(super::PacketError::InvalidTcpOptionLength {
+                kind: kind.as_u8(),
+                length: len,
+            });
+        }
+        let offset = offset + 2;
+        if offset + len as usize > packet.len() {
+            return Err(super::PacketError::InsufficientData {
+                offset,
+                size: len as usize,
+                length: packet.len(),
+            });
+        }
+        Ok(Some(Self {
+            kind,
+            length: len,
+            data: DataRange {
+                start: offset,
+                end: offset + len as usize - 2, // -2 for the kind and length fields
+            },
+        }))
     }
 }
 
